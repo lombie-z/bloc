@@ -58,7 +58,6 @@ interface Puzzle {
 }
 
 const TICK_MS = 600
-const GAP = 10
 const MAX_TICKS = 90
 const LOCK_FRAC = 0.62 // block locks only in the last ~38% of a tick
 const FLY_OFF = 1200 // px the chevrons travel off-screen on a win
@@ -610,9 +609,30 @@ export default function BlocGame() {
   puzzleRef.current = puzzle
   statusRef.current = status
 
+  // size the board to the viewport so it never overflows (esp. on mobile)
+  const [vp, setVp] = useState(() => ({
+    w: typeof window !== "undefined" ? window.innerWidth : 1024,
+    h: typeof window !== "undefined" ? window.innerHeight : 768,
+  }))
+  useEffect(() => {
+    const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener("resize", onResize)
+    window.addEventListener("orientationchange", onResize)
+    return () => {
+      window.removeEventListener("resize", onResize)
+      window.removeEventListener("orientationchange", onResize)
+    }
+  }, [])
+
   const size = puzzle.size
-  const cellPx = clamp(Math.floor(520 / size), 40, 64)
-  const stride = cellPx + GAP
+  // leave room for the top corner UI (height), side margins (width), and a
+  // little extra all round for the animals that prowl outside the grid
+  const reserve = animals.length > 0 ? 48 : 0
+  const avail = Math.min(vp.w - 32 - reserve, vp.h - 96 - reserve)
+  const stride0 = Math.max(26, avail / size)
+  const cellPx = clamp(Math.round(stride0 * 0.84), 22, 64)
+  const gap = clamp(Math.round(stride0 * 0.16), 3, 10)
+  const stride = cellPx + gap
   const chevronPx = Math.round(cellPx * 0.46) // same size resting or flying
 
   /* persist progress */
@@ -773,7 +793,7 @@ export default function BlocGame() {
     })
   }
 
-  const boardPx = size * cellPx + (size - 1) * GAP
+  const boardPx = size * cellPx + (size - 1) * gap
 
   // centre point of the collision, for the win pulse
   const burst = useMemo(() => {
@@ -899,7 +919,7 @@ export default function BlocGame() {
             style={{
               gridTemplateColumns: `repeat(${size}, ${cellPx}px)`,
               gridTemplateRows: `repeat(${size}, ${cellPx}px)`,
-              gap: `${GAP}px`,
+              gap: `${gap}px`,
               opacity: status === "WON" ? 0 : 1,
             }}
           >
