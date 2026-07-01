@@ -51,7 +51,7 @@ body {
   min-height: 100svh;
 }
 
-/* win burst — an expanding ring at the collision point */
+/* win burst - an expanding ring at the collision point */
 @keyframes bloc-burst {
   0% {
     transform: translate(-50%, -50%) scale(0.2);
@@ -63,7 +63,7 @@ body {
   }
 }
 
-/* idle emitter cue — a slow breathing glow to say "click me" */
+/* idle emitter cue - a slow breathing glow to say "click me" */
 @keyframes bloc-breathe {
   0%,
   100% {
@@ -113,7 +113,7 @@ body {
   }
 }
 
-/* nuke telegraph — the threatened row/column pulses a warning */
+/* nuke telegraph - the threatened row/column pulses a warning */
 @keyframes bloc-telegraph {
   0%,
   100% {
@@ -124,7 +124,7 @@ body {
   }
 }
 
-/* nuke fire — a bright flash that fades */
+/* nuke fire - a bright flash that fades */
 @keyframes bloc-beam {
   0% {
     opacity: 1;

@@ -13,7 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 
 /* ------------------------------------------------------------------ *
- *  BLOC — real-time chevron routing puzzle
+ *  chevro - a real-time chevron routing puzzle
  * ------------------------------------------------------------------ */
 
 type Dir = "UP" | "DOWN" | "LEFT" | "RIGHT"
@@ -80,7 +80,7 @@ const OPPOSITE: Record<Dir, Dir> = {
 }
 const DIR_ANGLE: Record<Dir, number> = { RIGHT: 0, DOWN: 90, LEFT: 180, UP: 270 }
 
-// The chevron entity — one glyph, drawn identically whether it's resting in
+// The chevron entity - one glyph, drawn identically whether it's resting in
 // the emitter or flying. Direction is pure rotation, so it's always the same
 // shape / colour / glow. Left-facing is just the same mark rotated 180°.
 const CHEVRON = "❯" // ❯
@@ -250,7 +250,7 @@ interface WindPuzzle extends Puzzle {
  * Winding-loop generation. The emitter sits at the centre with a straight
  * lead-in either side; a random self-avoiding walk joins the two ends into a
  * single simple loop through the emitter. Grid graphs are bipartite so every
- * such loop has even length — split it at the antipode and the two chevrons
+ * such loop has even length - split it at the antipode and the two chevrons
  * (one each way round the loop) reach that meeting cell on the same tick.
  * Every 90° turn on the loop gets a mirror (correctly oriented here); the
  * caller then scrambles the rotations and scatters decoys off the path.
@@ -415,7 +415,7 @@ function generateFallback(difficulty: number, _seed: number): Puzzle {
 
 /**
  * One tick. A mirror redirects the chevron as it *leaves* the cell it is
- * sitting in — so the player can keep rotating a mirror while the chevron is
+ * sitting in - so the player can keep rotating a mirror while the chevron is
  * inside it, right up until it steps out. Pipes and walls are barriers: the
  * chevron never enters them, it bounces (or is sliced) at the boundary.
  * `angle` accumulates so the arrow can pivot smoothly through turns.
@@ -509,7 +509,7 @@ function save(key: string, value: string) {
   try {
     localStorage.setItem(key, value)
   } catch {
-    /* storage unavailable (private mode, quota) — ignore */
+    /* storage unavailable (private mode, quota) - ignore */
   }
 }
 
@@ -589,7 +589,7 @@ export default function BlocGame() {
   const [grid, setGrid] = useState<Cell[][]>(() => puzzle.grid)
   const [chevrons, setChevrons] = useState<Chevron[]>([])
   const [status, setStatus] = useState<Status>("IDLE")
-  // true only during the final slice of each tick — a block locks just as the
+  // true only during the final slice of each tick - a block locks just as the
   // chevron is about to leave it, so you can rotate it until it's deep inside
   const [committing, setCommitting] = useState(false)
   const [animals, setAnimals] = useState<Animal[]>(() =>
@@ -658,7 +658,7 @@ export default function BlocGame() {
       : null
   }, [mode, levelNo, rebuild])
 
-  /* game loop — emit immediately, then tick */
+  /* game loop - emit immediately, then tick */
   useEffect(() => {
     if (status !== "PLAYING") {
       setCommitting(false)
@@ -823,7 +823,7 @@ export default function BlocGame() {
           </SheetTrigger>
           <SheetContent side="left" className="gap-6">
             <SheetHeader>
-              <SheetTitle className="font-mono tracking-tight">BLOC</SheetTitle>
+              <SheetTitle className="font-mono tracking-tight">chevro</SheetTitle>
               <SheetDescription className="font-mono text-xs">
                 route the chevrons together
               </SheetDescription>
@@ -896,7 +896,7 @@ export default function BlocGame() {
         </button>
       </div>
 
-      {/* board — dissolves on a win so the chevrons fly off into open space */}
+      {/* board - dissolves on a win so the chevrons fly off into open space */}
       <div
         style={{ animation: status === "LOST" ? "bloc-shake 450ms ease-in-out" : "none" }}
         className={cn(
@@ -939,7 +939,7 @@ export default function BlocGame() {
             )}
           </div>
 
-          {/* nuke beams — telegraph glow, then a bright flash on fire */}
+          {/* nuke beams - telegraph glow, then a bright flash on fire */}
           {(status === "PLAYING" || status === "LOST") &&
             animals.map((a) => {
               if (a.phase === "REST") return null
@@ -1029,7 +1029,7 @@ export default function BlocGame() {
             <Ripple x={burst.x} y={burst.y} rgb="16,185,129" base={cellPx * 1.3} />
           )}
 
-          {/* trails — blue comet in play, teal streak flying off on a win */}
+          {/* trails - blue comet in play, teal streak flying off on a win */}
           {(status === "PLAYING" || status === "WON") &&
             chevrons.map((ch) => {
               if (!ch.alive) return null
@@ -1066,7 +1066,7 @@ export default function BlocGame() {
               )
             })}
 
-          {/* chevrons — fly off on a win, linger dim-red at the loss spot */}
+          {/* chevrons - fly off on a win, linger dim-red at the loss spot */}
           {chevrons.map((ch) => {
             const flying = status === "WON" && ch.alive
             const [fdr, fdc] = DELTA[OPPOSITE[ch.dir]]
@@ -1168,11 +1168,11 @@ function CellTile({
   const clickable = cell.type === "EMITTER" || block !== null
   const label =
     cell.type === "EMITTER"
-      ? "Emitter — launch the chevrons"
+      ? "Emitter, launch the chevrons"
       : cell.type === "MIRROR"
-        ? `Mirror ${cell.orient} — rotate`
+        ? `Mirror ${cell.orient}, tap to rotate`
         : cell.type === "PIPE"
-          ? `Pipe ${cell.orient} — rotate`
+          ? `Pipe ${cell.orient}, tap to rotate`
           : "Empty cell"
   return (
     <button
@@ -1204,7 +1204,7 @@ function CellTile({
         }
       />
       {cell.type === "EMITTER" ? (
-        // the two chevrons that will launch — same entity as the flying ones
+        // the two chevrons that will launch - same entity as the flying ones
         <span
           className="relative z-10 flex h-full w-full items-center justify-center gap-[0.15em] transition-opacity duration-300 select-none"
           style={{
