@@ -501,22 +501,33 @@ function step(grid: Cell[][], chevrons: Chevron[], size: number): Chevron[] {
   })
 }
 
-// Two ways to collide:
-//  - meeting in the SAME cell, but only if it's open. On a mirror or pipe the
-//    block deflects them apart (opposite sides), so that must not win.
-//  - crossing head-on through a shared edge (a swap). That's a real pass-through
-//    regardless of the cells, so it always wins.
+// Which face of a diagonal mirror a chevron is on, from its incoming direction.
+// Two chevrons on the SAME face meet head-on (a hit); on OPPOSITE faces the
+// mirror deflects them apart (a miss).
+function mirrorSide(dir: Dir, orient: string): number {
+  if (orient === "/") return dir === "RIGHT" || dir === "DOWN" ? 0 : 1
+  return dir === "RIGHT" || dir === "UP" ? 0 : 1 // "\\"
+}
+
+// Collisions:
+//  - same cell: always a win in an open cell; on a mirror only when both hit
+//    the same face (opposite faces deflect apart; a pipe is never entered).
+//  - crossing head-on through a shared edge (a swap): always a real hit.
 function collided(next: Chevron[], grid: Cell[][]): boolean {
   const live = next.filter((c) => c.alive)
-  const open = (r: number, c: number) => {
-    const t = grid[r][c].type
-    return t === "EMPTY" || t === "EMITTER"
-  }
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i]
       const b = live[j]
-      if (a.r === b.r && a.c === b.c && open(a.r, a.c)) return true
+      if (a.r === b.r && a.c === b.c) {
+        const cell = grid[a.r][a.c]
+        if (cell.type === "EMPTY" || cell.type === "EMITTER") return true
+        if (
+          cell.type === "MIRROR" &&
+          mirrorSide(a.dir, cell.orient) === mirrorSide(b.dir, cell.orient)
+        )
+          return true
+      }
       if (a.r === b.pr && a.c === b.pc && b.r === a.pr && b.c === a.pc)
         return true
     }
