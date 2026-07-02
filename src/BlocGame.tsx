@@ -361,25 +361,16 @@ function survivesAnimals(
   return false
 }
 
-/** Build a playable level: winding path (that survives the animals), scrambled
- *  mirrors, decoys. */
-function generateLevel(
+/** Turn a solved candidate into a playable level: scramble the path mirrors so
+ *  the player has to fix them, then scatter decoys onto the untouched cells. */
+function finalizePuzzle(
+  p: WindPuzzle,
   difficulty: number,
   seed: number,
-  animals: Animal[],
-  animalRngSeed: number,
 ): Puzzle {
-  let p: WindPuzzle | null = null
-  for (let att = 0; att < 80 && !p; att++) {
-    const cand = generateWinding(difficulty, (seed + att * 0x9e3779b1) >>> 0)
-    if (cand && survivesAnimals(cand, animals, animalRngSeed)) p = cand
-  }
-  if (!p) return generateFallback(difficulty, seed)
-
   const rng = mulberry32(seed ^ 0x5bd1e995)
   const { grid, size, mirrors, reserved } = p
 
-  // scramble the path mirrors so the player has to fix them
   let anyWrong = false
   for (const m of mirrors) {
     const o = rng() < 0.5 ? "/" : "\\"
@@ -391,17 +382,13 @@ function generateLevel(
     grid[m.r][m.c] = mkMirror(m.solved === "/" ? "\\" : "/")
   }
 
-  // scatter decoys across the untouched cells
   const decoyProb = Math.min(0.5, 0.16 + difficulty * 0.03)
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
       if (reserved.has(r * size + c)) continue
       if (rng() < decoyProb) {
-        if (rng() < 0.62) {
-          grid[r][c] = mkMirror(rng() < 0.5 ? "/" : "\\")
-        } else {
-          grid[r][c] = mkPipe(rng() < 0.5 ? "|" : "-")
-        }
+        if (rng() < 0.62) grid[r][c] = mkMirror(rng() < 0.5 ? "/" : "\\")
+        else grid[r][c] = mkPipe(rng() < 0.5 ? "|" : "-")
       }
     }
   }
@@ -496,9 +483,11 @@ function step(grid: Cell[][], chevrons: Chevron[], size: number): Chevron[] {
   })
 }
 
-// A collision only counts in an OPEN cell. If the chevrons meet on a mirror or
-// pipe they're deflected/blocked by it (opposite sides of the block), so it is
-// not a real hit and must not win.
+// Two ways to collide:
+//  - meeting in the SAME cell, but only if it's open. On a mirror or pipe the
+//    block deflects them apart (opposite sides), so that must not win.
+//  - crossing head-on through a shared edge (a swap). That's a real pass-through
+//    regardless of the cells, so it always wins.
 function collided(next: Chevron[], grid: Cell[][]): boolean {
   const live = next.filter((c) => c.alive)
   const open = (r: number, c: number) => {
@@ -509,17 +498,8 @@ function collided(next: Chevron[], grid: Cell[][]): boolean {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i]
       const b = live[j]
-      // meet in the same open cell
       if (a.r === b.r && a.c === b.c && open(a.r, a.c)) return true
-      // cross head-on through the shared edge of two open cells
-      if (
-        a.r === b.pr &&
-        a.c === b.pc &&
-        b.r === a.pr &&
-        b.c === a.pc &&
-        open(a.r, a.c) &&
-        open(b.r, b.c)
-      )
+      if (a.r === b.pr && a.c === b.pc && b.r === a.pr && b.c === a.pc)
         return true
     }
   }
@@ -535,15 +515,6 @@ function todaySeed(): number {
 const dailyDifficulty = () => 3 + (todaySeed() % 5)
 const difficultyForLevel = (lvl: number) => clamp(lvl, 1, 10)
 const seedForLevel = (lvl: number) => (lvl * 2654435761) >>> 0
-
-function makePuzzle(mode: Mode, levelNo: number): Puzzle {
-  // the path must survive the very animals this level will spawn
-  const animals = makeAnimals(mode, levelNo)
-  const rngSeed = animalRngSeed(mode, levelNo)
-  const difficulty = mode === "DAILY" ? dailyDifficulty() : difficultyForLevel(levelNo)
-  const seed = mode === "DAILY" ? todaySeed() : seedForLevel(levelNo)
-  return generateLevel(difficulty, seed, animals, rngSeed)
-}
 
 function loadLevel(): number {
   try {
@@ -658,22 +629,50 @@ function stepAnimals(
   return { next, fired }
 }
 
+/**
+ * Build a level and its animals together, guaranteeing feasibility. Find a
+ * winding path whose solved solution survives the animals; if none can be
+ * found, drop the animals one at a time (with none, a valid path always wins),
+ * so a level is never impossible.
+ */
+function buildLevel(
+  mode: Mode,
+  levelNo: number,
+): { puzzle: Puzzle; animals: Animal[] } {
+  const fullAnimals = makeAnimals(mode, levelNo)
+  const rngSeed = animalRngSeed(mode, levelNo)
+  const difficulty =
+    mode === "DAILY" ? dailyDifficulty() : difficultyForLevel(levelNo)
+  const seed = mode === "DAILY" ? todaySeed() : seedForLevel(levelNo)
+
+  for (let n = fullAnimals.length; n >= 0; n--) {
+    const animals = fullAnimals.slice(0, n)
+    for (let att = 0; att < 60; att++) {
+      const cand = generateWinding(difficulty, (seed + att * 0x9e3779b1) >>> 0)
+      if (cand && survivesAnimals(cand, animals, rngSeed)) {
+        return { puzzle: finalizePuzzle(cand, difficulty, seed), animals }
+      }
+    }
+  }
+  return { puzzle: generateFallback(difficulty, seed), animals: [] }
+}
+
 /* ------------------------------ game ------------------------------ */
 
 export default function BlocGame() {
   const [mode, setMode] = useState<Mode>(loadMode)
   const [levelNo, setLevelNo] = useState<number>(loadLevel)
   const [rebuild, setRebuild] = useState(0)
-  const [puzzle, setPuzzle] = useState<Puzzle>(() => makePuzzle(loadMode(), loadLevel()))
+  // puzzle + animals are built together so the level is guaranteed feasible
+  const [initial] = useState(() => buildLevel(loadMode(), loadLevel()))
+  const [puzzle, setPuzzle] = useState<Puzzle>(initial.puzzle)
   const [grid, setGrid] = useState<Cell[][]>(() => puzzle.grid)
   const [chevrons, setChevrons] = useState<Chevron[]>([])
   const [status, setStatus] = useState<Status>("IDLE")
   // true only during the final slice of each tick - a block locks just as the
   // chevron is about to leave it, so you can rotate it until it's deep inside
   const [committing, setCommitting] = useState(false)
-  const [animals, setAnimals] = useState<Animal[]>(() =>
-    makeAnimals(loadMode(), loadLevel()),
-  )
+  const [animals, setAnimals] = useState<Animal[]>(initial.animals)
   // fast-forward: doubles the tick rate for longer boards
   const [fast, setFast] = useState(() => {
     try {
@@ -690,6 +689,8 @@ export default function BlocGame() {
   const gridRef = useRef(grid)
   const animalsRef = useRef(animals)
   const animalRngRef = useRef<(() => number) | null>(null)
+  // the feasible animal set for this level, to restore after a loss
+  const levelAnimalsRef = useRef<Animal[]>(initial.animals)
   animalsRef.current = animals
   const chevRef = useRef(chevrons)
   const puzzleRef = useRef(puzzle)
@@ -755,15 +756,15 @@ export default function BlocGame() {
 
   /* (re)build board when level / mode / rebuild changes */
   useEffect(() => {
-    const p = makePuzzle(mode, levelNo)
+    const { puzzle: p, animals: a } = buildLevel(mode, levelNo)
     setPuzzle(p)
     setGrid(p.grid)
     setChevrons([])
     setStatus("IDLE")
     tickRef.current = 0
-    const fresh = makeAnimals(mode, levelNo)
-    setAnimals(fresh)
-    animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
+    setAnimals(a)
+    levelAnimalsRef.current = a
+    animalRngRef.current = a.length ? animalRng(mode, levelNo) : null
   }, [mode, levelNo, rebuild])
 
   /* game loop - emit immediately, then tick (self-scheduling so the speed can
@@ -839,7 +840,8 @@ export default function BlocGame() {
       const t = setTimeout(() => {
         setChevrons([])
         setCommitting(false)
-        const fresh = makeAnimals(mode, levelNo)
+        // restore this level's feasible animal set in its initial state
+        const fresh = levelAnimalsRef.current.map((a) => ({ ...a }))
         setAnimals(fresh)
         animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
         setStatus("IDLE")
