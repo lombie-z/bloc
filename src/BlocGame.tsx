@@ -326,7 +326,7 @@ function isSolvable(p: Puzzle): boolean {
   ]
   for (let t = 0; t < p.size * p.size + 5; t++) {
     chev = step(p.grid, chev, p.size)
-    if (collided(chev)) return true
+    if (collided(chev, p.grid)) return true
     if (chev.some((c) => !c.alive)) return false
   }
   return false
@@ -464,14 +464,31 @@ function step(grid: Cell[][], chevrons: Chevron[], size: number): Chevron[] {
   })
 }
 
-function collided(next: Chevron[]): boolean {
+// A collision only counts in an OPEN cell. If the chevrons meet on a mirror or
+// pipe they're deflected/blocked by it (opposite sides of the block), so it is
+// not a real hit and must not win.
+function collided(next: Chevron[], grid: Cell[][]): boolean {
   const live = next.filter((c) => c.alive)
+  const open = (r: number, c: number) => {
+    const t = grid[r][c].type
+    return t === "EMPTY" || t === "EMITTER"
+  }
   for (let i = 0; i < live.length; i++) {
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i]
       const b = live[j]
-      if (a.r === b.r && a.c === b.c) return true
-      if (a.r === b.pr && a.c === b.pc && b.r === a.pr && b.c === a.pc) return true
+      // meet in the same open cell
+      if (a.r === b.r && a.c === b.c && open(a.r, a.c)) return true
+      // cross head-on through the shared edge of two open cells
+      if (
+        a.r === b.pr &&
+        a.c === b.pc &&
+        b.r === a.pr &&
+        b.c === a.pc &&
+        open(a.r, a.c) &&
+        open(b.r, b.c)
+      )
+        return true
     }
   }
   return false
@@ -517,10 +534,10 @@ function save(key: string, value: string) {
 
 /* ------------------------------ animals --------------------------- */
 
-// endless gets tougher the deeper you go (from level 10); the daily always
-// has a steady few so it plays like a proper challenge
+// endless starts with 1 animal from the very first level and adds more the
+// deeper you go; the daily always has a steady few
 const animalCountForLevel = (lvl: number) =>
-  lvl < 10 ? 0 : Math.min(4, 1 + Math.floor((lvl - 10) / 6))
+  Math.min(4, 1 + Math.floor((lvl - 1) / 7))
 
 // base seed, grid size and animal count for the current board
 function animalPlan(
@@ -726,7 +743,7 @@ export default function BlocGame() {
       tickRef.current += 1
       const size = puzzleRef.current.size
       const next = step(gridRef.current, chevRef.current, size)
-      const won = collided(next)
+      const won = collided(next, gridRef.current)
 
       // advance animals; a nuke kills any chevron caught on the fired line
       const rng = animalRngRef.current
