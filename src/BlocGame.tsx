@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  Eraser,
   FastForward,
+  FlipHorizontal2,
   RotateCcw,
   Settings2,
+  Slash,
   Trophy,
   Volume2,
   VolumeX,
 } from "lucide-react"
+import type { ComponentType } from "react"
 import { PixelCanvas } from "@/components/ui/pixel-canvas"
 import { Button } from "@/components/ui/button"
 import {
@@ -43,6 +47,49 @@ interface Cell {
   type: CellType
   orient: string // mirror: "/" | "\\" ; pipe: "|" | "-"
   rot?: number // display rotation (deg); accumulates so clicks spin smoothly
+  flip?: boolean // a "flip" item is on this block: toggles after first contact
+  flipped?: boolean // the flip has already fired this run
+  player?: boolean // block was placed by the player (a "slash" item)
+}
+
+// Drag-on items you collect one of each of, deep into a run.
+type ItemType = "CLEAR" | "FLIP" | "SLASH"
+const ITEM_TYPES: ItemType[] = ["CLEAR", "FLIP", "SLASH"]
+
+interface ItemMeta {
+  name: string
+  blurb: string
+  Icon: ComponentType<{ className?: string }>
+  // full class strings (Tailwind needs literals, so no dynamic accent names)
+  ring: string // border/ring accent for the cube + valid targets
+  chip: string // idle cube background
+  glyph: string // colour of the affected block on the board
+}
+const ITEM_META: Record<ItemType, ItemMeta> = {
+  CLEAR: {
+    name: "clear",
+    blurb: "wipe a block off its square",
+    Icon: Eraser,
+    ring: "border-slate-400 ring-slate-400/70",
+    chip: "border-slate-300 bg-white text-slate-500",
+    glyph: "",
+  },
+  FLIP: {
+    name: "flip",
+    blurb: "block flips after the first chevron touches it",
+    Icon: FlipHorizontal2,
+    ring: "border-amber-400 ring-amber-400/70",
+    chip: "border-amber-300 bg-amber-50 text-amber-600",
+    glyph: "text-amber-500",
+  },
+  SLASH: {
+    name: "slash",
+    blurb: "drop a new mirror on an empty square",
+    Icon: Slash,
+    ring: "border-teal-400 ring-teal-400/70",
+    chip: "border-teal-300 bg-teal-50 text-teal-600",
+    glyph: "text-teal-500",
+  },
 }
 
 interface Chevron {
@@ -177,6 +224,26 @@ function reflect(dir: Dir, mirror: string): Dir {
 const rotOf = (orient: string) => (orient === "/" || orient === "|" ? 0 : 90)
 const mkMirror = (o: string): Cell => ({ type: "MIRROR", orient: o, rot: rotOf(o) })
 const mkPipe = (o: string): Cell => ({ type: "PIPE", orient: o, rot: rotOf(o) })
+
+// flip a block to its other orientation (mirror / <-> \, pipe | <-> -), keeping
+// the glyph spinning the same way (+90) rather than snapping back.
+function toggleOrient(cell: Cell): Cell {
+  if (cell.type === "MIRROR")
+    return { ...cell, orient: cell.orient === "/" ? "\\" : "/", rot: (cell.rot ?? rotOf(cell.orient)) + 90 }
+  if (cell.type === "PIPE")
+    return { ...cell, orient: cell.orient === "|" ? "-" : "|", rot: (cell.rot ?? rotOf(cell.orient)) + 90 }
+  return cell
+}
+// apply a set of flip-item toggles to a grid copy (once each, via `flipped`)
+function applyFlips(grid: Cell[][], cells: [number, number][]): Cell[][] {
+  const g = grid.map((row) => row.slice())
+  for (const [r, c] of cells) {
+    const cell = g[r][c]
+    if (!cell.flip || cell.flipped) continue
+    g[r][c] = { ...toggleOrient(cell), flipped: true }
+  }
+  return g
+}
 
 /* ------------------------ level generation ------------------------ */
 
@@ -560,6 +627,18 @@ function loadMode(): Mode {
     return "ENDLESS"
   }
 }
+function loadItems(): Set<ItemType> {
+  try {
+    const raw = localStorage.getItem("bloc.items") ?? ""
+    return new Set(raw.split(",").filter((t): t is ItemType =>
+      (ITEM_TYPES as string[]).includes(t),
+    ))
+  } catch {
+    return new Set()
+  }
+}
+// how many items you should own by a given endless level (one per 5, capped)
+const itemsDue = (levelNo: number) => Math.min(3, Math.floor(levelNo / 5))
 function save(key: string, value: string) {
   try {
     localStorage.setItem(key, value)
@@ -702,6 +781,17 @@ export default function BlocGame() {
   // chevron is about to leave it, so you can rotate it until it's deep inside
   const [committing, setCommitting] = useState(false)
   const [animals, setAnimals] = useState<Animal[]>(initial.animals)
+
+  // items: a collection you build one-of-each of (endless only). `used` tracks
+  // which you've spent on the current board; `armed` is a tapped-but-not-yet-
+  // placed cube; `drag` is a cube being dragged; `pick` is the reward chooser.
+  const [owned, setOwned] = useState<Set<ItemType>>(loadItems)
+  const [used, setUsed] = useState<Set<ItemType>>(() => new Set())
+  const [armed, setArmed] = useState<ItemType | null>(null)
+  const [drag, setDrag] = useState<{ type: ItemType; x: number; y: number } | null>(null)
+  const [pick, setPick] = useState<ItemType[] | null>(null)
+  const dragRef = useRef<{ type: ItemType; sx: number; sy: number; moved: boolean } | null>(null)
+
   // fast-forward: doubles the tick rate for longer boards
   const [fast, setFast] = useState(() => {
     try {
@@ -777,6 +867,25 @@ export default function BlocGame() {
   useEffect(() => {
     save("bloc.fast", fast ? "1" : "0")
   }, [fast])
+  useEffect(() => {
+    save("bloc.items", [...owned].join(","))
+  }, [owned])
+
+  /* every 5 endless levels, offer a pick of the items you don't own yet
+     (one of each, max three) - shown as the new board loads */
+  useEffect(() => {
+    if (mode !== "ENDLESS") {
+      setPick(null)
+      return
+    }
+    setOwned((cur) => {
+      if (cur.size < itemsDue(levelNo) && cur.size < ITEM_TYPES.length) {
+        setPick(ITEM_TYPES.filter((t) => !cur.has(t)))
+      }
+      return cur
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelNo, mode, rebuild])
 
   /* background music: created up front, started (browsers block autoplay) on
      the first interaction, then faded in and looped */
@@ -821,6 +930,8 @@ export default function BlocGame() {
     setStatus("IDLE")
     tickRef.current = 0
     setAnimals(a)
+    setUsed(new Set()) // fresh board: your items come back
+    setArmed(null)
     levelAnimalsRef.current = a
     animalRngRef.current = a.length ? animalRng(mode, levelNo) : null
     restartMusic() // fresh level, restart the track from the top (no-op if idle)
@@ -840,8 +951,29 @@ export default function BlocGame() {
       if (statusRef.current !== "PLAYING") return
       tickRef.current += 1
       const size = puzzleRef.current.size
-      const next = step(gridRef.current, chevRef.current, size)
-      const won = collided(next, gridRef.current)
+      const g0 = gridRef.current
+      const next = step(g0, chevRef.current, size)
+      const won = collided(next, g0)
+
+      // flip items: a block toggles the first time a chevron touches it - as a
+      // chevron leaves a mirror, or bounces off / is sliced by a pipe. `next`
+      // was computed on the old orientation, so this chevron used it as-is and
+      // the change only affects whoever arrives next.
+      const toggles: [number, number][] = []
+      for (const ch of chevRef.current) {
+        if (!ch.alive) continue
+        const cur = g0[ch.r][ch.c]
+        if (cur.type === "MIRROR" && cur.flip && !cur.flipped) toggles.push([ch.r, ch.c])
+        const outDir = cur.type === "MIRROR" ? reflect(ch.dir, cur.orient) : ch.dir
+        const [dr, dc] = DELTA[outDir]
+        const nr = ch.r + dr
+        const nc = ch.c + dc
+        if (nr >= 0 && nc >= 0 && nr < size && nc < size) {
+          const dest = g0[nr][nc]
+          if (dest.type === "PIPE" && dest.flip && !dest.flipped) toggles.push([nr, nc])
+        }
+      }
+      if (toggles.length) setGrid((prev) => applyFlips(prev, toggles))
 
       // advance animals; a nuke kills any chevron caught on the fired line
       const rng = animalRngRef.current
@@ -904,6 +1036,16 @@ export default function BlocGame() {
       const t = setTimeout(() => {
         setChevrons([])
         setCommitting(false)
+        // re-arm any flip items that fired, restoring their pre-fire orientation
+        setGrid((prev) =>
+          prev.map((row) =>
+            row.map((cell) =>
+              cell.flip && cell.flipped
+                ? { ...toggleOrient(cell), flipped: false }
+                : cell,
+            ),
+          ),
+        )
         // restore this level's feasible animal set in its initial state
         const fresh = levelAnimalsRef.current.map((a) => ({ ...a }))
         setAnimals(fresh)
@@ -942,8 +1084,74 @@ export default function BlocGame() {
     setStatus("PLAYING")
   }
 
+  // where can a given cube land? clear/flip need a block; slash needs a gap.
+  const placementValid = (type: ItemType, cell: Cell) => {
+    if (cell.type === "EMITTER") return false
+    if (type === "SLASH") return cell.type === "EMPTY"
+    if (type === "FLIP")
+      return (cell.type === "MIRROR" || cell.type === "PIPE") && !cell.flip
+    return cell.type === "MIRROR" || cell.type === "PIPE" // CLEAR
+  }
+
+  const placeItem = (type: ItemType, r: number, c: number) => {
+    if (!owned.has(type) || used.has(type)) return
+    if (!placementValid(type, gridRef.current[r][c])) return
+    setGrid((prev) => {
+      const g = prev.map((row) => row.slice())
+      const cell = g[r][c]
+      if (type === "CLEAR") g[r][c] = { type: "EMPTY", orient: "" }
+      else if (type === "FLIP") g[r][c] = { ...cell, flip: true, flipped: false }
+      else if (type === "SLASH") g[r][c] = { ...mkMirror("/"), player: true }
+      return g
+    })
+    setUsed((prev) => new Set(prev).add(type))
+    setArmed(null)
+  }
+
+  // drag a cube from the tray onto a square (works with mouse + touch); a tap
+  // with no movement instead "arms" the cube so the next square-tap places it.
+  const onCubeDown = (e: React.PointerEvent, type: ItemType) => {
+    if (used.has(type)) return
+    dragRef.current = { type, sx: e.clientX, sy: e.clientY, moved: false }
+    setDrag({ type, x: e.clientX, y: e.clientY })
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current
+      if (!d) return
+      if (Math.abs(ev.clientX - d.sx) > 6 || Math.abs(ev.clientY - d.sy) > 6)
+        d.moved = true
+      setDrag((p) => (p ? { ...p, x: ev.clientX, y: ev.clientY } : p))
+    }
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      const d = dragRef.current
+      dragRef.current = null
+      setDrag(null)
+      if (!d) return
+      if (!d.moved) {
+        setArmed((cur) => (cur === d.type ? null : d.type)) // tap = arm/disarm
+        return
+      }
+      const el = document.elementFromPoint(ev.clientX, ev.clientY)
+      const cellEl = el?.closest("[data-cell]") as HTMLElement | null
+      if (cellEl) {
+        const r = Number(cellEl.dataset.r)
+        const c = Number(cellEl.dataset.c)
+        if (Number.isFinite(r) && Number.isFinite(c)) placeItem(d.type, r, c)
+      }
+      setArmed(null)
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+  }
+
   const handleCell = (r: number, c: number) => {
     const t = grid[r][c]
+    if (armed) {
+      if (placementValid(armed, t)) placeItem(armed, r, c)
+      else setArmed(null)
+      return
+    }
     if (t.type === "EMITTER") {
       if (status === "IDLE") start()
       return
@@ -1100,6 +1308,97 @@ export default function BlocGame() {
         {fast ? "2×" : "1×"}
       </button>
 
+      {/* item tray - drag a cube onto a square, or tap it then tap a square */}
+      {mode === "ENDLESS" && owned.size > 0 && (
+        <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2 select-none">
+          {ITEM_TYPES.filter((t) => owned.has(t)).map((t) => {
+            const m = ITEM_META[t]
+            const spent = used.has(t)
+            const isArmed = armed === t
+            return (
+              <button
+                key={t}
+                type="button"
+                aria-label={`${m.name}: ${m.blurb}`}
+                aria-pressed={isArmed}
+                disabled={spent}
+                onPointerDown={(e) => onCubeDown(e, t)}
+                className={cn(
+                  "relative flex size-11 touch-none items-center justify-center rounded-2xl border-2 shadow-sm transition-all",
+                  spent
+                    ? "border-slate-200 bg-slate-50 text-slate-300 opacity-50"
+                    : cn(
+                        m.chip,
+                        "cursor-grab hover:-translate-y-0.5 active:cursor-grabbing",
+                      ),
+                  isArmed && cn(m.ring, "-translate-y-0.5 animate-pulse ring-2 ring-offset-2"),
+                )}
+              >
+                <m.Icon className="size-5" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* the cube following the pointer while dragging */}
+      {drag &&
+        (() => {
+          const m = ITEM_META[drag.type]
+          return (
+            <div
+              className={cn(
+                "pointer-events-none fixed z-50 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl border-2 shadow-lg",
+                m.chip,
+              )}
+              style={{ left: drag.x, top: drag.y }}
+            >
+              <m.Icon className="size-5" />
+            </div>
+          )
+        })()}
+
+      {/* reward chooser: pick one of the items you don't own yet */}
+      {pick && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-white/70 p-6 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="flex flex-col items-center gap-5 rounded-3xl border border-slate-100 bg-white p-7 shadow-[0_30px_80px_-30px_rgba(2,132,199,0.45)] animate-in zoom-in-95 duration-200">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="font-mono text-lg font-semibold tracking-tight text-slate-800">
+                new item
+              </span>
+              <span className="font-mono text-xs text-muted-foreground">
+                pick one to keep
+              </span>
+            </div>
+            <div className="flex gap-3">
+              {pick.map((t) => {
+                const m = ITEM_META[t]
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => {
+                      setOwned((cur) => new Set(cur).add(t))
+                      setPick(null)
+                    }}
+                    className={cn(
+                      "flex w-28 flex-col items-center gap-2 rounded-2xl border-2 p-4 text-center transition-all hover:-translate-y-1 hover:shadow-lg",
+                      m.chip,
+                    )}
+                  >
+                    <m.Icon className="size-7" />
+                    <span className="font-mono text-sm font-semibold">{m.name}</span>
+                    <span className="font-mono text-[10px] leading-tight text-slate-500">
+                      {m.blurb}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* board - dissolves on a win so the chevrons fly off into open space */}
       <div
         style={{ animation: status === "LOST" ? "bloc-shake 450ms ease-in-out" : "none" }}
@@ -1132,11 +1431,14 @@ export default function BlocGame() {
                 <CellTile
                   key={`${r}-${c}`}
                   cell={cell}
+                  r={r}
+                  c={c}
                   size={cellPx}
                   chevronPx={chevronPx}
                   hideEmitter={status !== "IDLE"}
                   emitterCue={status === "IDLE"}
                   active={energized.has(`${r},${c}`)}
+                  targetable={armed !== null && placementValid(armed, cell)}
                   onClick={() => handleCell(r, c)}
                 />
               )),
@@ -1347,30 +1649,45 @@ function Ripple({
 
 // mirror / pipe are one base glyph drawn rotated, so a click spins it 90°
 function blockFor(cell: Cell): { base: string; cls: string } | null {
-  if (cell.type === "MIRROR") return { base: "/", cls: "text-slate-600" }
-  if (cell.type === "PIPE") return { base: "|", cls: "text-slate-400" }
+  if (cell.type === "MIRROR") {
+    const cls = cell.flip
+      ? ITEM_META.FLIP.glyph
+      : cell.player
+        ? ITEM_META.SLASH.glyph
+        : "text-slate-600"
+    return { base: "/", cls }
+  }
+  if (cell.type === "PIPE") {
+    return { base: "|", cls: cell.flip ? ITEM_META.FLIP.glyph : "text-slate-400" }
+  }
   return null
 }
 
 function CellTile({
   cell,
+  r,
+  c,
   size,
   chevronPx,
   active,
+  targetable,
   hideEmitter,
   emitterCue,
   onClick,
 }: {
   cell: Cell
+  r: number
+  c: number
   size: number
   chevronPx: number
   active: boolean
+  targetable: boolean
   hideEmitter: boolean
   emitterCue: boolean
   onClick: () => void
 }) {
   const block = blockFor(cell)
-  const clickable = cell.type === "EMITTER" || block !== null
+  const clickable = cell.type === "EMITTER" || block !== null || targetable
   const label =
     cell.type === "EMITTER"
       ? "Emitter, launch the chevrons"
@@ -1384,6 +1701,9 @@ function CellTile({
       onClick={onClick}
       aria-label={label}
       tabIndex={clickable ? 0 : -1}
+      data-cell=""
+      data-r={r}
+      data-c={c}
       style={{ width: size, height: size }}
       className={cn(
         "group relative touch-manipulation overflow-hidden rounded-2xl border border-border bg-white transition-[border-color,box-shadow,transform] duration-200",
@@ -1391,9 +1711,15 @@ function CellTile({
           ? "cursor-pointer hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-[0_6px_16px_-6px_rgba(2,132,199,0.45)] active:translate-y-0 active:scale-[0.94]"
           : "cursor-default",
         "focus:outline-none focus-visible:border-sky-400",
+        // a placed flip / player block gets a faint tinted ring so it reads
+        cell.flip && "ring-1 ring-amber-300/70",
+        cell.player && "ring-1 ring-teal-300/60",
         // a chevron sitting here energises the tile: strong blue glitter + glow
         active &&
           "border-sky-400 shadow-[0_0_22px_-2px_rgba(56,189,248,0.75)] ring-2 ring-sky-400/70",
+        // a valid drop target while a cube is armed: a dashed pulsing outline
+        targetable &&
+          "border-sky-400 ring-2 ring-sky-400/80 ring-offset-1 animate-pulse",
       )}
     >
       <PixelCanvas
