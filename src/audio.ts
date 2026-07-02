@@ -130,3 +130,40 @@ export function playLose(muted: boolean) {
   blip(c, "sine", 293.66, t, 0.7, 0.13, 220.0) // D4 gliding down to A3
   blip(c, "sine", 220.0, t + 0.16, 0.85, 0.09) // soft low A3 underneath
 }
+
+// A church-bell chime struck on D: a sharp strike, then a ring built from the
+// inharmonic partials (hum, tierce/minor-third, quint, nominal...) that give a
+// bell its distinctive shimmering, slightly-minor timbre.
+const BELL_PARTIALS: [ratio: number, gain: number, decay: number][] = [
+  [0.5, 0.16, 1.6], // hum (an octave below)
+  [1.0, 0.5, 1.5], // fundamental / strike note (D)
+  [1.19, 0.24, 1.0], // tierce (minor third) — the "bell" character
+  [1.5, 0.18, 0.9], // quint (fifth)
+  [2.0, 0.28, 0.8], // nominal (octave)
+  [2.5, 0.1, 0.5],
+  [2.66, 0.08, 0.45],
+  [3.01, 0.06, 0.4],
+]
+
+export function playBell(muted: boolean) {
+  if (muted) return
+  const c = ensureCtx()
+  if (!c) return
+  const t = c.currentTime + 0.005
+  const fundamental = 293.66 // D4
+  const master = c.createGain()
+  master.gain.value = 0.3
+  master.connect(c.destination)
+  for (const [ratio, gain, decay] of BELL_PARTIALS) {
+    const o = c.createOscillator()
+    const g = c.createGain()
+    o.type = "sine"
+    o.frequency.setValueAtTime(fundamental * ratio, t)
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(gain, t + 0.004) // sharp strike
+    g.gain.exponentialRampToValueAtTime(0.0006, t + decay)
+    o.connect(g).connect(master)
+    o.start(t)
+    o.stop(t + decay + 0.05)
+  }
+}

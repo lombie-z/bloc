@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils"
 import {
   duckMusic,
   initAudio,
+  playBell,
   playLose,
   playWin,
   restartMusic,
@@ -836,6 +837,7 @@ export default function BlocGame() {
       if (rng && animalsRef.current.length) {
         const res = stepAnimals(animalsRef.current, rng, size)
         setAnimals(res.next)
+        if (res.fired.length) playBell(mutedRef.current) // laser -> bell chime
         if (!won && res.fired.length) {
           for (const f of res.fired) {
             for (const ch of next) {
