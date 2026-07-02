@@ -1382,15 +1382,12 @@ export default function BlocGame() {
                       setPick(null)
                     }}
                     className={cn(
-                      "flex w-28 flex-col items-center gap-2 rounded-2xl border-2 p-4 text-center transition-all hover:-translate-y-1 hover:shadow-lg",
+                      "flex w-24 flex-col items-center gap-2.5 rounded-2xl border-2 p-5 text-center transition-all hover:-translate-y-1 hover:shadow-lg",
                       m.chip,
                     )}
                   >
                     <m.Icon className="size-7" />
                     <span className="font-mono text-sm font-semibold">{m.name}</span>
-                    <span className="font-mono text-[10px] leading-tight text-slate-500">
-                      {m.blurb}
-                    </span>
                   </button>
                 )
               })}

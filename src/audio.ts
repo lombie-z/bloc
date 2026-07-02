@@ -152,7 +152,7 @@ export function playBell(muted: boolean) {
   const t = c.currentTime + 0.005
   const fundamental = 293.66 // D4
   const master = c.createGain()
-  master.gain.value = 0.3
+  master.gain.value = 0.1
   master.connect(c.destination)
   for (const [ratio, gain, decay] of BELL_PARTIALS) {
     const o = c.createOscillator()
