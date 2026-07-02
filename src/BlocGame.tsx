@@ -515,20 +515,42 @@ function save(key: string, value: string) {
 
 /* ------------------------------ animals --------------------------- */
 
-// hostile animals arrive once the endless run gets hard (level 10+)
+// endless gets tougher the deeper you go (from level 10); the daily always
+// has a steady few so it plays like a proper challenge
 const animalCountForLevel = (lvl: number) =>
   lvl < 10 ? 0 : Math.min(4, 1 + Math.floor((lvl - 10) / 6))
-const animalSeed = (levelNo: number) => (seedForLevel(levelNo) ^ 0x9e3779b1) >>> 0
+
+// base seed, grid size and animal count for the current board
+function animalPlan(
+  mode: Mode,
+  levelNo: number,
+): { base: number; size: number; count: number } {
+  if (mode === "DAILY") {
+    const day = todaySeed()
+    return {
+      base: (day ^ 0x9e3779b1) >>> 0,
+      size: SIZE_BY_DIFF[dailyDifficulty() - 1],
+      count: 2 + (day % 2), // 2-3 animals, same for everyone that day
+    }
+  }
+  return {
+    base: (seedForLevel(levelNo) ^ 0x9e3779b1) >>> 0,
+    size: SIZE_BY_DIFF[difficultyForLevel(levelNo) - 1],
+    count: animalCountForLevel(levelNo),
+  }
+}
+
+// rng that drives the live attack pattern (targets, timing)
+const animalRng = (mode: Mode, levelNo: number) =>
+  mulberry32((animalPlan(mode, levelNo).base ^ 0x2545f491) >>> 0)
 
 function makeAnimals(mode: Mode, levelNo: number): Animal[] {
-  if (mode !== "ENDLESS") return []
-  const n = animalCountForLevel(levelNo)
-  if (!n) return []
-  const rng = mulberry32(animalSeed(levelNo))
-  const size = SIZE_BY_DIFF[difficultyForLevel(levelNo) - 1]
+  const { base, size, count } = animalPlan(mode, levelNo)
+  if (!count) return []
+  const rng = mulberry32(base)
   const sides: AnimalSide[] = ["left", "right", "top", "bottom"]
   const out: Animal[] = []
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < count; i++) {
     out.push({
       id: i,
       side: sides[Math.floor(rng() * 4)],
@@ -653,9 +675,7 @@ export default function BlocGame() {
     tickRef.current = 0
     const fresh = makeAnimals(mode, levelNo)
     setAnimals(fresh)
-    animalRngRef.current = fresh.length
-      ? mulberry32((animalSeed(levelNo) ^ 0x2545f491) >>> 0)
-      : null
+    animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
   }, [mode, levelNo, rebuild])
 
   /* game loop - emit immediately, then tick */
@@ -731,9 +751,7 @@ export default function BlocGame() {
         setCommitting(false)
         const fresh = makeAnimals(mode, levelNo)
         setAnimals(fresh)
-        animalRngRef.current = fresh.length
-          ? mulberry32((animalSeed(levelNo) ^ 0x2545f491) >>> 0)
-          : null
+        animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
         setStatus("IDLE")
       }, 750)
       return () => clearTimeout(t)
