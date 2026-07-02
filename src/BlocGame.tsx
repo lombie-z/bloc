@@ -1348,7 +1348,7 @@ function Ripple({
 // mirror / pipe are one base glyph drawn rotated, so a click spins it 90°
 function blockFor(cell: Cell): { base: string; cls: string } | null {
   if (cell.type === "MIRROR") return { base: "/", cls: "text-slate-600" }
-  if (cell.type === "PIPE") return { base: "|", cls: "text-rose-400" }
+  if (cell.type === "PIPE") return { base: "|", cls: "text-slate-400" }
   return null
 }
 
