@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { RotateCcw, Settings2, Trophy } from "lucide-react"
+import { FastForward, RotateCcw, Settings2, Trophy } from "lucide-react"
 import { PixelCanvas } from "@/components/ui/pixel-canvas"
 import { Button } from "@/components/ui/button"
 import {
@@ -91,11 +91,13 @@ function ChevronMark({
   angle,
   animate,
   dead = false,
+  turnMs = TURN_MS,
 }: {
   px: number
   angle: number
   animate: boolean
   dead?: boolean
+  turnMs?: number
 }) {
   return (
     <span
@@ -105,7 +107,7 @@ function ChevronMark({
         lineHeight: 1,
         opacity: dead ? 0.65 : 1,
         transform: `rotate(${angle}deg)`,
-        transition: animate ? `transform ${TURN_MS}ms ease-out` : "none",
+        transition: animate ? `transform ${turnMs}ms ease-out` : "none",
         textShadow: dead
           ? "none"
           : "0 0 8px rgba(14,165,233,0.55), 0 0 16px rgba(14,165,233,0.35)",
@@ -617,6 +619,18 @@ export default function BlocGame() {
   const [animals, setAnimals] = useState<Animal[]>(() =>
     makeAnimals(loadMode(), loadLevel()),
   )
+  // fast-forward: doubles the tick rate for longer boards
+  const [fast, setFast] = useState(() => {
+    try {
+      return localStorage.getItem("bloc.fast") === "1"
+    } catch {
+      return false
+    }
+  })
+  const speed = fast ? 2 : 1
+  const tickMs = Math.round(TICK_MS / speed)
+  const speedRef = useRef(speed)
+  speedRef.current = speed
 
   const gridRef = useRef(grid)
   const animalsRef = useRef(animals)
@@ -664,6 +678,25 @@ export default function BlocGame() {
   useEffect(() => {
     save("bloc.mode", mode)
   }, [mode])
+  useEffect(() => {
+    save("bloc.fast", fast ? "1" : "0")
+  }, [fast])
+
+  /* arrow keys toggle fast-forward (up/right = 2x, down/left = normal) */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+        setFast(true)
+        e.preventDefault()
+      } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+        setFast(false)
+        e.preventDefault()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
 
   /* (re)build board when level / mode / rebuild changes */
   useEffect(() => {
@@ -678,13 +711,14 @@ export default function BlocGame() {
     animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
   }, [mode, levelNo, rebuild])
 
-  /* game loop - emit immediately, then tick */
+  /* game loop - emit immediately, then tick (self-scheduling so the speed can
+     change mid-run without restarting the loop / re-emitting) */
   useEffect(() => {
     if (status !== "PLAYING") {
       setCommitting(false)
       return
     }
-    let iv: ReturnType<typeof setInterval> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
     let commitTimer: ReturnType<typeof setTimeout> | undefined
 
     const advance = () => {
@@ -715,22 +749,23 @@ export default function BlocGame() {
       }
 
       setChevrons(next)
+      const tick = TICK_MS / speedRef.current
       // unlock at the start of the tick, re-lock once the chevron is deep in
       setCommitting(false)
       clearTimeout(commitTimer)
-      commitTimer = setTimeout(() => setCommitting(true), TICK_MS * LOCK_FRAC)
+      commitTimer = setTimeout(() => setCommitting(true), tick * LOCK_FRAC)
       if (won) setStatus("WON")
       else if (next.some((c) => !c.alive)) setStatus("LOST")
       else if (tickRef.current > MAX_TICKS) setStatus("LOST")
+      else timer = setTimeout(advance, tick) // schedule the next tick
     }
 
     const raf = requestAnimationFrame(() => {
       advance() // chevrons leave the emitter box right away
-      iv = setInterval(advance, TICK_MS)
     })
     return () => {
       cancelAnimationFrame(raf)
-      if (iv) clearInterval(iv)
+      clearTimeout(timer)
       clearTimeout(commitTimer)
     }
   }, [status])
@@ -914,6 +949,22 @@ export default function BlocGame() {
         </button>
       </div>
 
+      {/* fast-forward (tap on mobile, or arrow keys on desktop) */}
+      <button
+        onClick={() => setFast((f) => !f)}
+        aria-label={fast ? "Normal speed" : "Double speed"}
+        aria-pressed={fast}
+        className={cn(
+          "absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-4 py-2 font-mono text-sm tabular-nums transition-colors",
+          fast
+            ? "border-sky-400 bg-sky-500 text-white shadow-[0_8px_22px_-8px_rgba(14,165,233,0.8)]"
+            : "border-slate-200 bg-white/70 text-slate-500 backdrop-blur hover:border-sky-400 hover:text-sky-500",
+        )}
+      >
+        <FastForward className="size-4" fill={fast ? "currentColor" : "none"} />
+        {fast ? "2×" : "1×"}
+      </button>
+
       {/* board - dissolves on a win so the chevrons fly off into open space */}
       <div
         style={{ animation: status === "LOST" ? "bloc-shake 450ms ease-in-out" : "none" }}
@@ -1065,7 +1116,7 @@ export default function BlocGame() {
                     transform: `translate(${tx}px, ${ty}px)`,
                     transition: flying
                       ? "transform 1300ms cubic-bezier(0.3,0,0.2,1), opacity 1300ms ease-out"
-                      : "transform 920ms cubic-bezier(0.4,0,0.2,1)",
+                      : `transform ${Math.round(920 / speed)}ms cubic-bezier(0.4,0,0.2,1)`,
                     opacity: flying ? 0 : 1,
                   }}
                 >
@@ -1101,13 +1152,14 @@ export default function BlocGame() {
                   transition: flying
                     ? "transform 950ms cubic-bezier(0.4,0,0.85,0.5), opacity 950ms ease-in"
                     : status === "PLAYING"
-                      ? `transform ${TICK_MS}ms linear`
+                      ? `transform ${tickMs}ms linear`
                       : "none",
                   opacity: flying ? 0 : 1,
                 }}
               >
                 <ChevronMark
                   px={chevronPx}
+                  turnMs={Math.round(TURN_MS / speed)}
                   angle={ch.angle + (flying ? 180 : 0)}
                   animate={status === "PLAYING" || flying}
                   dead={!ch.alive}
