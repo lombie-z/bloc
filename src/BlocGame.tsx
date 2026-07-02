@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { FastForward, RotateCcw, Settings2, Trophy } from "lucide-react"
+import {
+  FastForward,
+  RotateCcw,
+  Settings2,
+  Trophy,
+  Volume2,
+  VolumeX,
+} from "lucide-react"
 import { PixelCanvas } from "@/components/ui/pixel-canvas"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,6 +18,16 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
+import {
+  duckMusic,
+  initAudio,
+  playLose,
+  playWin,
+  restartMusic,
+  restoreMusic,
+  setMusicMuted,
+  startMusic,
+} from "@/audio"
 
 /* ------------------------------------------------------------------ *
  *  chevro - a real-time chevron routing puzzle
@@ -686,6 +703,17 @@ export default function BlocGame() {
   const speedRef = useRef(speed)
   speedRef.current = speed
 
+  // background music: starts (and fades in) on the first interaction, loops
+  const [muted, setMuted] = useState(() => {
+    try {
+      return localStorage.getItem("bloc.muted") === "1"
+    } catch {
+      return false
+    }
+  })
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
+
   const gridRef = useRef(grid)
   const animalsRef = useRef(animals)
   const animalRngRef = useRef<(() => number) | null>(null)
@@ -738,6 +766,24 @@ export default function BlocGame() {
     save("bloc.fast", fast ? "1" : "0")
   }, [fast])
 
+  /* background music: created up front, started (browsers block autoplay) on
+     the first interaction, then faded in and looped */
+  useEffect(() => {
+    initAudio(mutedRef.current)
+    const onGesture = () => startMusic(mutedRef.current)
+    window.addEventListener("pointerdown", onGesture)
+    window.addEventListener("keydown", onGesture)
+    return () => {
+      window.removeEventListener("pointerdown", onGesture)
+      window.removeEventListener("keydown", onGesture)
+    }
+  }, [])
+
+  useEffect(() => {
+    save("bloc.muted", muted ? "1" : "0")
+    setMusicMuted(muted)
+  }, [muted])
+
   /* arrow keys toggle fast-forward (up/right = 2x, down/left = normal) */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -765,6 +811,7 @@ export default function BlocGame() {
     setAnimals(a)
     levelAnimalsRef.current = a
     animalRngRef.current = a.length ? animalRng(mode, levelNo) : null
+    restartMusic() // fresh level, restart the track from the top (no-op if idle)
   }, [mode, levelNo, rebuild])
 
   /* game loop - emit immediately, then tick (self-scheduling so the speed can
@@ -829,6 +876,8 @@ export default function BlocGame() {
   /* resolve WON / LOST */
   useEffect(() => {
     if (status === "WON") {
+      playWin(mutedRef.current)
+      duckMusic()
       const t = setTimeout(() => {
         if (mode === "ENDLESS") setLevelNo((n) => n + 1)
         else setRebuild((k) => k + 1)
@@ -836,6 +885,8 @@ export default function BlocGame() {
       return () => clearTimeout(t)
     }
     if (status === "LOST") {
+      playLose(mutedRef.current)
+      duckMusic()
       // keep the player's rotations; just clear the run so they can adjust
       const t = setTimeout(() => {
         setChevrons([])
@@ -844,6 +895,7 @@ export default function BlocGame() {
         const fresh = levelAnimalsRef.current.map((a) => ({ ...a }))
         setAnimals(fresh)
         animalRngRef.current = fresh.length ? animalRng(mode, levelNo) : null
+        restoreMusic() // same level, so bring the track back (not restarted)
         setStatus("IDLE")
       }, 750)
       return () => clearTimeout(t)
@@ -923,8 +975,8 @@ export default function BlocGame() {
 
   return (
     <div className="relative isolate flex min-h-svh w-full touch-manipulation items-center justify-center overflow-auto bg-background p-4 select-none">
-      {/* settings */}
-      <div className="absolute top-4 left-4 z-20">
+      {/* settings + mute */}
+      <div className="absolute top-4 left-4 z-20 flex items-center gap-1">
         <Sheet>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Settings">
@@ -980,6 +1032,19 @@ export default function BlocGame() {
             </div>
           </SheetContent>
         </Sheet>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={muted ? "Unmute music" : "Mute music"}
+          aria-pressed={muted}
+          onClick={() => setMuted((m) => !m)}
+        >
+          {muted ? (
+            <VolumeX className="size-5 text-muted-foreground" />
+          ) : (
+            <Volume2 className="size-5 text-sky-500" />
+          )}
+        </Button>
       </div>
 
       {/* ambient glow behind the board (clipped so it never adds scroll) */}
