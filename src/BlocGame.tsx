@@ -342,9 +342,13 @@ interface WindPuzzle extends Puzzle {
  * Every 90° turn on the loop gets a mirror (correctly oriented here); the
  * caller then scrambles the rotations and scatters decoys off the path.
  */
-function generateWinding(difficulty: number, seed: number): WindPuzzle | null {
+function generateWinding(
+  size: number,
+  minLen: number,
+  maxLen: number,
+  seed: number,
+): WindPuzzle | null {
   const rng = mulberry32(seed)
-  const size = SIZE_BY_DIFF[clamp(difficulty, 1, 10) - 1]
   const R = Math.floor(size / 2)
   const C = Math.floor(size / 2)
   const lead = clamp(Math.min(3, C, size - 1 - C), 2, 3)
@@ -361,8 +365,6 @@ function generateWinding(difficulty: number, seed: number): WindPuzzle | null {
   for (const [r, c] of leftLead) blocked.add(keyf(r, c))
   for (const [r, c] of rightLead) blocked.add(keyf(r, c))
 
-  const minLen = 3 + Math.floor(difficulty / 2)
-  const maxLen = size + difficulty * 2
   const middle = randomMiddle(size, A, B, blocked, rng, minLen, maxLen)
   if (!middle) return null
 
@@ -450,7 +452,7 @@ function survivesAnimals(
  *  the player has to fix them, then scatter decoys onto the untouched cells. */
 function finalizePuzzle(
   p: WindPuzzle,
-  difficulty: number,
+  decoyProb: number,
   seed: number,
 ): Puzzle {
   const rng = mulberry32(seed ^ 0x5bd1e995)
@@ -467,7 +469,6 @@ function finalizePuzzle(
     grid[m.r][m.c] = mkMirror(m.solved === "/" ? "\\" : "/")
   }
 
-  const decoyProb = Math.min(0.5, 0.16 + difficulty * 0.03)
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
       if (reserved.has(r * size + c)) continue
@@ -482,8 +483,7 @@ function finalizePuzzle(
 }
 
 /** Guaranteed-solvable symmetric fallback (rarely used). */
-function generateFallback(difficulty: number, _seed: number): Puzzle {
-  const size = SIZE_BY_DIFF[clamp(difficulty, 1, 10) - 1]
+function generateFallback(size: number, _seed: number): Puzzle {
   const grid: Cell[][] = Array.from({ length: size }, () =>
     Array.from({ length: size }, () => ({ type: "EMPTY", orient: "" })),
   )
@@ -609,8 +609,46 @@ function todaySeed(): number {
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()
 }
 const dailyDifficulty = () => 3 + (todaySeed() % 5)
-const difficultyForLevel = (lvl: number) => clamp(lvl, 1, 10)
 const seedForLevel = (lvl: number) => (lvl * 2654435761) >>> 0
+
+// The board stays small far longer than it used to (cap 8, not 10), so the
+// difficulty ramp is carried by the *bespoke puzzle* - longer, twistier
+// solution paths and denser decoys - rather than by an ever-growing grid.
+const GRID_MAX = 8
+function sizeForLevel(lvl: number): number {
+  if (lvl <= 5) return 5
+  if (lvl <= 12) return 6
+  if (lvl <= 22) return 7
+  return GRID_MAX
+}
+
+interface LevelParams {
+  size: number
+  minLen: number // shortest allowed solution path (more = twistier)
+  maxLen: number
+  decoyProb: number
+}
+function levelParams(mode: Mode, levelNo: number): LevelParams {
+  if (mode === "DAILY") {
+    const d = dailyDifficulty() // 3..7
+    const size = clamp(SIZE_BY_DIFF[d - 1], 5, 7) // keep the daily compact too
+    return {
+      size,
+      minLen: clamp(3 + d, 3, size + Math.floor(size / 2)),
+      maxLen: size * 2 + 2,
+      decoyProb: Math.min(0.55, 0.16 + d * 0.04),
+    }
+  }
+  const size = sizeForLevel(levelNo)
+  return {
+    size,
+    // the required path length keeps climbing with the level, capped only by
+    // what fits the (small) grid - so puzzles stay bespoke and get harder
+    minLen: clamp(3 + Math.floor(levelNo / 2), 3, size + Math.floor(size / 2)),
+    maxLen: size * 2 + 2,
+    decoyProb: Math.min(0.55, 0.16 + levelNo * 0.02),
+  }
+}
 
 function loadLevel(): number {
   try {
@@ -663,13 +701,13 @@ function animalPlan(
     const day = todaySeed()
     return {
       base: (day ^ 0x9e3779b1) >>> 0,
-      size: SIZE_BY_DIFF[dailyDifficulty() - 1],
+      size: levelParams("DAILY", levelNo).size,
       count: 2 + (day % 2), // 2-3 animals, same for everyone that day
     }
   }
   return {
     base: (seedForLevel(levelNo) ^ 0x9e3779b1) >>> 0,
-    size: SIZE_BY_DIFF[difficultyForLevel(levelNo) - 1],
+    size: levelParams("ENDLESS", levelNo).size,
     count: animalCountForLevel(levelNo),
   }
 }
@@ -749,20 +787,23 @@ function buildLevel(
 ): { puzzle: Puzzle; animals: Animal[] } {
   const fullAnimals = makeAnimals(mode, levelNo)
   const rngSeed = animalRngSeed(mode, levelNo)
-  const difficulty =
-    mode === "DAILY" ? dailyDifficulty() : difficultyForLevel(levelNo)
+  const { size, minLen, maxLen, decoyProb } = levelParams(mode, levelNo)
   const seed = mode === "DAILY" ? todaySeed() : seedForLevel(levelNo)
 
   for (let n = fullAnimals.length; n >= 0; n--) {
     const animals = fullAnimals.slice(0, n)
     for (let att = 0; att < 60; att++) {
-      const cand = generateWinding(difficulty, (seed + att * 0x9e3779b1) >>> 0)
+      const s = (seed + att * 0x9e3779b1) >>> 0
+      // ease the required length if a seed struggles, so we keep a real
+      // winding puzzle instead of dropping to the plain fallback
+      const relax = att < 40 ? minLen : Math.max(3, minLen - 2)
+      const cand = generateWinding(size, relax, maxLen, s)
       if (cand && survivesAnimals(cand, animals, rngSeed)) {
-        return { puzzle: finalizePuzzle(cand, difficulty, seed), animals }
+        return { puzzle: finalizePuzzle(cand, decoyProb, seed), animals }
       }
     }
   }
-  return { puzzle: generateFallback(difficulty, seed), animals: [] }
+  return { puzzle: generateFallback(size, seed), animals: [] }
 }
 
 /* ------------------------------ game ------------------------------ */
