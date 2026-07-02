@@ -318,29 +318,61 @@ function generateWinding(difficulty: number, seed: number): WindPuzzle | null {
   return { grid, size, er: R, ec: C, reserved, mirrors }
 }
 
-/** Simulate the solved board; returns true if the chevrons collide. */
-function isSolvable(p: Puzzle): boolean {
+/**
+ * Simulate the solved board *against the animals* (same schedule the player
+ * will face): true only if the chevrons collide before any is destroyed by a
+ * wall, pipe, or a nuke. This makes level feasibility account for the animals.
+ */
+function survivesAnimals(
+  p: Puzzle,
+  animals: Animal[],
+  rngSeed: number,
+): boolean {
+  const rng = mulberry32(rngSeed >>> 0)
   let chev: Chevron[] = [
     { id: 0, r: p.er, c: p.ec, dir: "LEFT", pr: p.er, pc: p.ec, alive: true, angle: 180 },
     { id: 1, r: p.er, c: p.ec, dir: "RIGHT", pr: p.er, pc: p.ec, alive: true, angle: 0 },
   ]
-  for (let t = 0; t < p.size * p.size + 5; t++) {
-    chev = step(p.grid, chev, p.size)
-    if (collided(chev, p.grid)) return true
+  let anim = animals
+  for (let t = 0; t <= MAX_TICKS; t++) {
+    const next = step(p.grid, chev, p.size)
+    const won = collided(next, p.grid)
+    if (anim.length) {
+      const res = stepAnimals(anim, rng, p.size)
+      anim = res.next
+      if (!won) {
+        for (const f of res.fired) {
+          for (const ch of next) {
+            if (
+              ch.alive &&
+              ((f.axis === "row" && ch.r === f.index) ||
+                (f.axis === "col" && ch.c === f.index))
+            ) {
+              ch.alive = false
+            }
+          }
+        }
+      }
+    }
+    chev = next
+    if (won) return true
     if (chev.some((c) => !c.alive)) return false
   }
   return false
 }
 
-/** Build a playable level: winding path, scrambled mirrors, decoys. */
-function generateLevel(difficulty: number, seed: number): Puzzle {
+/** Build a playable level: winding path (that survives the animals), scrambled
+ *  mirrors, decoys. */
+function generateLevel(
+  difficulty: number,
+  seed: number,
+  animals: Animal[],
+  animalRngSeed: number,
+): Puzzle {
   let p: WindPuzzle | null = null
-  for (let att = 0; att < 40 && !p; att++) {
-    const cand = generateWinding(
-      difficulty,
-      (seed + att * 0x9e3779b1) >>> 0,
-    )
-    if (cand && isSolvable(cand)) p = cand
+  for (let att = 0; att < 80 && !p; att++) {
+    const cand = generateWinding(difficulty, (seed + att * 0x9e3779b1) >>> 0)
+    if (cand && survivesAnimals(cand, animals, animalRngSeed)) p = cand
   }
   if (!p) return generateFallback(difficulty, seed)
 
@@ -505,8 +537,12 @@ const difficultyForLevel = (lvl: number) => clamp(lvl, 1, 10)
 const seedForLevel = (lvl: number) => (lvl * 2654435761) >>> 0
 
 function makePuzzle(mode: Mode, levelNo: number): Puzzle {
-  if (mode === "DAILY") return generateLevel(dailyDifficulty(), todaySeed())
-  return generateLevel(difficultyForLevel(levelNo), seedForLevel(levelNo))
+  // the path must survive the very animals this level will spawn
+  const animals = makeAnimals(mode, levelNo)
+  const rngSeed = animalRngSeed(mode, levelNo)
+  const difficulty = mode === "DAILY" ? dailyDifficulty() : difficultyForLevel(levelNo)
+  const seed = mode === "DAILY" ? todaySeed() : seedForLevel(levelNo)
+  return generateLevel(difficulty, seed, animals, rngSeed)
 }
 
 function loadLevel(): number {
@@ -560,8 +596,10 @@ function animalPlan(
 }
 
 // rng that drives the live attack pattern (targets, timing)
+const animalRngSeed = (mode: Mode, levelNo: number) =>
+  (animalPlan(mode, levelNo).base ^ 0x2545f491) >>> 0
 const animalRng = (mode: Mode, levelNo: number) =>
-  mulberry32((animalPlan(mode, levelNo).base ^ 0x2545f491) >>> 0)
+  mulberry32(animalRngSeed(mode, levelNo))
 
 function makeAnimals(mode: Mode, levelNo: number): Animal[] {
   const { base, size, count } = animalPlan(mode, levelNo)
