@@ -64,6 +64,7 @@ interface ItemMeta {
   ring: string // border/ring accent for the cube + valid targets
   chip: string // idle cube background
   glyph: string // colour of the affected block on the board
+  colors: string[] // pixel-canvas sparkle palette (light -> accent)
 }
 const ITEM_META: Record<ItemType, ItemMeta> = {
   CLEAR: {
@@ -73,6 +74,7 @@ const ITEM_META: Record<ItemType, ItemMeta> = {
     ring: "border-slate-400 ring-slate-400/70",
     chip: "border-slate-300 bg-white text-slate-500",
     glyph: "",
+    colors: ["#cbd5e1", "#94a3b8", "#64748b"],
   },
   FLIP: {
     name: "flip",
@@ -81,6 +83,7 @@ const ITEM_META: Record<ItemType, ItemMeta> = {
     ring: "border-amber-400 ring-amber-400/70",
     chip: "border-amber-300 bg-amber-50 text-amber-600",
     glyph: "text-amber-500",
+    colors: ["#fef3c7", "#fcd34d", "#f59e0b"],
   },
   SLASH: {
     name: "slash",
@@ -89,6 +92,7 @@ const ITEM_META: Record<ItemType, ItemMeta> = {
     ring: "border-teal-400 ring-teal-400/70",
     chip: "border-teal-300 bg-teal-50 text-teal-600",
     glyph: "text-teal-500",
+    colors: ["#ccfbf1", "#5eead4", "#14b8a6"],
   },
 }
 
@@ -1331,6 +1335,48 @@ export default function BlocGame() {
           <RotateCcw className="size-3" />
           reset
         </button>
+
+        {/* item cubes - sparkly coloured boxes; drag onto a square, or tap to
+            arm then tap a square. They keep sparkling here and on the board. */}
+        {mode === "ENDLESS" && owned.size > 0 && (
+          <div className="mt-3 flex items-center gap-2">
+            {ITEM_TYPES.filter((t) => owned.has(t)).map((t) => {
+              const m = ITEM_META[t]
+              const spent = used.has(t)
+              const isArmed = armed === t
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  aria-label={`${m.name}: ${m.blurb}`}
+                  aria-pressed={isArmed}
+                  disabled={spent}
+                  onPointerDown={(e) => onCubeDown(e, t)}
+                  className={cn(
+                    "relative flex size-11 touch-none items-center justify-center overflow-hidden rounded-2xl border-2 shadow-sm transition-all",
+                    spent
+                      ? "border-slate-200 bg-slate-50 text-slate-300 opacity-40"
+                      : cn(
+                          m.chip,
+                          "cursor-grab hover:-translate-y-0.5 active:cursor-grabbing",
+                        ),
+                    isArmed && cn(m.ring, "-translate-y-0.5 ring-2 ring-offset-2"),
+                  )}
+                >
+                  <PixelCanvas
+                    gap={6}
+                    speed={45}
+                    colors={m.colors}
+                    variant="icon"
+                    active={!spent}
+                    style={{ opacity: 0.85 }}
+                  />
+                  <m.Icon className="relative z-10 size-5" />
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* fast-forward (tap on mobile, or arrow keys on desktop) */}
@@ -1349,39 +1395,6 @@ export default function BlocGame() {
         {fast ? "2×" : "1×"}
       </button>
 
-      {/* item tray - drag a cube onto a square, or tap it then tap a square */}
-      {mode === "ENDLESS" && owned.size > 0 && (
-        <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2 select-none">
-          {ITEM_TYPES.filter((t) => owned.has(t)).map((t) => {
-            const m = ITEM_META[t]
-            const spent = used.has(t)
-            const isArmed = armed === t
-            return (
-              <button
-                key={t}
-                type="button"
-                aria-label={`${m.name}: ${m.blurb}`}
-                aria-pressed={isArmed}
-                disabled={spent}
-                onPointerDown={(e) => onCubeDown(e, t)}
-                className={cn(
-                  "relative flex size-11 touch-none items-center justify-center rounded-2xl border-2 shadow-sm transition-all",
-                  spent
-                    ? "border-slate-200 bg-slate-50 text-slate-300 opacity-50"
-                    : cn(
-                        m.chip,
-                        "cursor-grab hover:-translate-y-0.5 active:cursor-grabbing",
-                      ),
-                  isArmed && cn(m.ring, "-translate-y-0.5 animate-pulse ring-2 ring-offset-2"),
-                )}
-              >
-                <m.Icon className="size-5" />
-              </button>
-            )
-          })}
-        </div>
-      )}
-
       {/* the cube following the pointer while dragging */}
       {drag &&
         (() => {
@@ -1389,12 +1402,20 @@ export default function BlocGame() {
           return (
             <div
               className={cn(
-                "pointer-events-none fixed z-50 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl border-2 shadow-lg",
+                "pointer-events-none fixed z-50 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-2xl border-2 shadow-lg",
                 m.chip,
               )}
               style={{ left: drag.x, top: drag.y }}
             >
-              <m.Icon className="size-5" />
+              <PixelCanvas
+                gap={6}
+                speed={45}
+                colors={m.colors}
+                variant="icon"
+                active
+                style={{ opacity: 0.85 }}
+              />
+              <m.Icon className="relative z-10 size-5" />
             </div>
           )
         })()}
@@ -1726,6 +1747,12 @@ function CellTile({
 }) {
   const block = blockFor(cell)
   const clickable = cell.type === "EMITTER" || block !== null || targetable
+  // a placed item keeps its cell sparkling in the item's colour
+  const itemColors = cell.flip
+    ? ITEM_META.FLIP.colors
+    : cell.player
+      ? ITEM_META.SLASH.colors
+      : null
   const label =
     cell.type === "EMITTER"
       ? "Emitter, launch the chevrons"
@@ -1763,13 +1790,15 @@ function CellTile({
       <PixelCanvas
         gap={7}
         speed={40}
-        colors={PIXEL_COLORS}
+        colors={itemColors ?? PIXEL_COLORS}
         variant="icon"
-        active={active}
+        active={active || itemColors !== null}
         style={
           active
             ? { filter: "brightness(1.3) saturate(1.4)", opacity: 1 }
-            : undefined
+            : itemColors
+              ? { opacity: 0.9 }
+              : undefined
         }
       />
       {cell.type === "EMITTER" ? (

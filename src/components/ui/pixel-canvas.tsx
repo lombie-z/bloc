@@ -127,6 +127,7 @@ class PixelCanvasElement extends HTMLElement {
   private _initialized: boolean = false
   private _resizeObserver: ResizeObserver | null = null
   private _parent: Element | null = null
+  private _anim: "appear" | "disappear" | null = null
   private _onEnter = () => this.handleAnimation("appear")
   private _onLeave = () => this.handleAnimation("disappear")
 
@@ -273,9 +274,14 @@ class PixelCanvasElement extends HTMLElement {
         )
       }
     }
+
+    // if we're meant to be shimmering (e.g. an always-on tile), (re)start it now
+    // that the pixels exist - covers the mount race and resizes mid-shimmer
+    if (this._anim === "appear") this.handleAnimation("appear")
   }
 
   handleAnimation(name: "appear" | "disappear") {
+    this._anim = name
     if (this.animation) {
       cancelAnimationFrame(this.animation)
     }
